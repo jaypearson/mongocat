@@ -1,0 +1,4 @@
+// the configured options and settings for mongocat
+#define mongocat_VERSION_MAJOR @mongocat_VERSION_MAJOR@
+#define mongocat_VERSION_MINOR @mongocat_VERSION_MINOR@
+#define mongocat_VERSION_PATCH @mongocat_VERSION_PATCH@
