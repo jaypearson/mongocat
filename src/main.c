@@ -193,7 +193,7 @@ int main(int argc, char *argv[])
     /*
        * Convert each incoming document to BSON and print to stdout.
        */
-    while ((b = bson_json_reader_read(reader, &doc, &error)))
+    /* while ((b = bson_json_reader_read(reader, &doc, &error)))
     {
         end_time = clock();
         time_spent = (double)(end_time - begin_time) / CLOCKS_PER_SEC;
@@ -221,7 +221,8 @@ int main(int argc, char *argv[])
         printf("%d documents inserted: %f\n", count, time_spent);
         bson_reinit(&doc);
         begin_time = clock();
-    }
+    }*/
+    b = bson_json_reader_read(reader, &doc, &error);
 
     for (i = 0; i < *numRuns->ival; i++)
     {
