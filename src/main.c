@@ -11,9 +11,10 @@ struct arg_lit *verb, *help, *version, *json;
 struct arg_str *source, *dest;
 struct arg_end *end;
 struct arg_file *input, *output;
+struct arg_int *batchSize;
 
 static void
-bulk1(mongoc_collection_t *collection, bson_t *doc)
+bulk1(mongoc_collection_t *collection, bson_t *doc, int batchSize)
 {
     mongoc_bulk_operation_t *bulk;
     bson_error_t error;
@@ -24,7 +25,7 @@ bulk1(mongoc_collection_t *collection, bson_t *doc)
 
     bulk = mongoc_collection_create_bulk_operation_with_opts(collection, NULL);
 
-    for (i = 0; i < 10000; i++)
+    for (i = 0; i < batchSize; i++)
     {
         mongoc_bulk_operation_insert(bulk, doc);
     }
@@ -54,6 +55,7 @@ int main(int argc, char *argv[])
         dest = arg_strn("d", "dest", "<uri>", 0, 1, "uri for destination MongoDB"),
         input = arg_file0("i", "input", "<input filename>", "input filename"),
         output = arg_file0("o", "output", "<output filename>", "output filename"),
+        batchSize = arg_int0(NULL, "batchSize", "#", "number of documents to insert"),
         verb = arg_litn("v", "verbose", 0, 1, "verbose output"),
         json = arg_litn("j", "json", 0, 1, "output JSON format"),
         end = arg_end(20),
@@ -202,7 +204,7 @@ int main(int argc, char *argv[])
         }
 
         begin_time = clock();
-        for (i = 0; i < 10000; i++)
+        for (i = 0; i < *batchSize->ival; i++)
         {
             if (!mongoc_collection_insert_one(collection, &doc, NULL, NULL, &error))
             {
@@ -220,7 +222,7 @@ int main(int argc, char *argv[])
         begin_time = clock();
     }
 
-    bulk1(collection, &doc);
+    bulk1(collection, &doc, *batchSize->ival);
     end_time = clock();
     time_spent = (double)(end_time - begin_time) / CLOCKS_PER_SEC;
     printf("Bulk insert: %f\n", time_spent);
