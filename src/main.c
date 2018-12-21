@@ -4,6 +4,7 @@
 #include <mongoc/mongoc.h>
 #include <bson.h>
 #include <time.h>
+#include <pthread.h>
 #include "mongocatConfig.h"
 
 /* global arg_xxx structs */
@@ -11,38 +12,52 @@ struct arg_lit *verb, *help, *version, *json;
 struct arg_str *source, *dest;
 struct arg_end *end;
 struct arg_file *input, *output;
-struct arg_int *batchSize, *numRuns;
+struct arg_int *batchSize, *numRuns, *numThreads;
 
-static void
-bulk1(mongoc_collection_t *collection, bson_t *doc, int batchSize)
+bson_t doc = BSON_INITIALIZER;
+
+void *bulk1(void *void_ptr)
 {
+    mongoc_collection_t *collection = (mongoc_collection_t *)void_ptr;
     mongoc_bulk_operation_t *bulk;
     bson_error_t error;
     bson_t reply;
     char *str;
     bool ret;
-    int i;
+    int i, j;
+    clock_t begin_time, end_time;
+    double time_spent;
 
-    bulk = mongoc_collection_create_bulk_operation_with_opts(collection, NULL);
-
-    for (i = 0; i < batchSize; i++)
+    for (j = 0; j < *numRuns->ival; j++)
     {
-        mongoc_bulk_operation_insert(bulk, doc);
+        begin_time = clock();
+
+        bulk = mongoc_collection_create_bulk_operation_with_opts(collection, NULL);
+
+        for (i = 0; i < *batchSize->ival; i++)
+        {
+            mongoc_bulk_operation_insert(bulk, &doc);
+        }
+
+        ret = mongoc_bulk_operation_execute(bulk, &reply, &error);
+
+        str = bson_as_canonical_extended_json(&reply, NULL);
+        printf("%s\n", str);
+        bson_free(str);
+
+        if (!ret)
+        {
+            fprintf(stderr, "Error: %s\n", error.message);
+        }
+
+        bson_destroy(&reply);
+        mongoc_bulk_operation_destroy(bulk);
+
+        end_time = clock();
+        time_spent = (double)(end_time - begin_time) / CLOCKS_PER_SEC;
+        printf("Bulk insert: %f\n", time_spent);
     }
-
-    ret = mongoc_bulk_operation_execute(bulk, &reply, &error);
-
-    str = bson_as_canonical_extended_json(&reply, NULL);
-    printf("%s\n", str);
-    bson_free(str);
-
-    if (!ret)
-    {
-        fprintf(stderr, "Error: %s\n", error.message);
-    }
-
-    bson_destroy(&reply);
-    mongoc_bulk_operation_destroy(bulk);
+    return NULL;
 }
 
 int main(int argc, char *argv[])
@@ -57,6 +72,7 @@ int main(int argc, char *argv[])
         output = arg_file0("o", "output", "<output filename>", "output filename"),
         batchSize = arg_int0(NULL, "batchSize", "#", "number of documents to insert"),
         numRuns = arg_int0(NULL, "numRuns", "#", "number of batches to insert"),
+        numThreads = arg_int0(NULL, "numThreads", "#", "number of threads to submit batches"),
         verb = arg_litn("v", "verbose", 0, 1, "verbose output"),
         json = arg_litn("j", "json", 0, 1, "output JSON format"),
         end = arg_end(20),
@@ -82,8 +98,8 @@ int main(int argc, char *argv[])
 
     bson_json_reader_t *reader;
     const char *filename;
-    bson_t doc = BSON_INITIALIZER;
-    int i, b, count = 0;
+    int i, j, b, count = 0;
+    pthread_t tid;
 
     /* special case: '--help' takes precedence over error reporting */
     if (help->count > 0)
@@ -224,14 +240,11 @@ int main(int argc, char *argv[])
     }*/
     b = bson_json_reader_read(reader, &doc, &error);
 
-    for (i = 0; i < *numRuns->ival; i++)
+    for (i = 0; i < *numThreads->ival; i++)
     {
-        begin_time = clock();
-        bulk1(collection, &doc, *batchSize->ival);
-        end_time = clock();
-        time_spent = (double)(end_time - begin_time) / CLOCKS_PER_SEC;
-        printf("Bulk insert: %f\n", time_spent);
+        pthread_create(&tid, NULL, bulk1, (void *)collection);
     }
+    pthread_exit(NULL);
 
     bson_json_reader_destroy(reader);
     bson_destroy(&doc);
