@@ -67,6 +67,7 @@ static void *bulk1(void *data)
         time_spent = (double)(end_time - begin_time) / CLOCKS_PER_SEC;
         printf("Bulk insert: %f\n", time_spent);
     }
+    printf("Thread exiting...\n");
     mongoc_collection_destroy(collection);
     mongoc_client_destroy(client);
     return NULL;
@@ -222,7 +223,6 @@ int main(int argc, char *argv[])
     {
         pthread_join(threads[i], &ret);
     }
-    pthread_exit(NULL);
 
     bson_json_reader_destroy(reader);
     bson_destroy(&doc);
