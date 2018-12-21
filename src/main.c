@@ -16,17 +16,27 @@ struct arg_int *batchSize, *numRuns, *numThreads;
 
 bson_t doc = BSON_INITIALIZER;
 
-void *bulk1(void *void_ptr)
+static void *bulk1(void *data)
 {
-    mongoc_collection_t *collection = (mongoc_collection_t *)void_ptr;
-    mongoc_bulk_operation_t *bulk;
+    mongoc_client_pool_t *pool = (mongoc_client_pool_t *)data;
+    mongoc_client_t *client;
+    mongoc_collection_t *collection;
+    bson_t *command, reply;
     bson_error_t error;
-    bson_t reply;
     char *str;
     bool ret;
+    mongoc_bulk_operation_t *bulk;
     int i, j;
     clock_t begin_time, end_time;
     double time_spent;
+
+    client = mongoc_client_pool_pop(pool);
+    if (!client)
+    {
+        return NULL;
+    }
+
+    collection = mongoc_client_get_collection(client, "db_name", "coll_name");
 
     for (j = 0; j < *numRuns->ival; j++)
     {
@@ -41,9 +51,9 @@ void *bulk1(void *void_ptr)
 
         ret = mongoc_bulk_operation_execute(bulk, &reply, &error);
 
-        str = bson_as_canonical_extended_json(&reply, NULL);
+        /* str = bson_as_canonical_extended_json(&reply, NULL);
         printf("%s\n", str);
-        bson_free(str);
+        bson_free(str); */
 
         if (!ret)
         {
@@ -57,6 +67,8 @@ void *bulk1(void *void_ptr)
         time_spent = (double)(end_time - begin_time) / CLOCKS_PER_SEC;
         printf("Bulk insert: %f\n", time_spent);
     }
+    mongoc_collection_destroy(collection);
+    mongoc_client_destroy(client);
     return NULL;
 }
 
@@ -80,26 +92,22 @@ int main(int argc, char *argv[])
 
     int exitcode = 0;
     char progname[] = "mongocat";
-    clock_t begin_time, end_time;
-    double time_spent;
 
     int nerrors;
     nerrors = arg_parse(argc, argv, argtable);
 
     const char *uri_string = source->count > 0 ? *source->sval : "mongodb://localhost:27017";
     mongoc_uri_t *uri;
-    mongoc_client_t *client;
-    mongoc_database_t *database;
-    mongoc_collection_t *collection;
-    bson_t *command, reply;
+    mongoc_client_pool_t *pool;
+
     bson_error_t error;
-    char *str;
-    bool retval;
 
     bson_json_reader_t *reader;
     const char *filename;
-    int i, j, b, count = 0;
-    pthread_t tid;
+    int i, b = 0;
+    pthread_t threads[8];
+
+    void *ret;
 
     /* special case: '--help' takes precedence over error reporting */
     if (help->count > 0)
@@ -149,41 +157,8 @@ int main(int argc, char *argv[])
     /*
     * Create a new client instance
     */
-    client = mongoc_client_new_from_uri(uri);
-    if (!client)
-    {
-        return EXIT_FAILURE;
-    }
-
-    /*
-    * Register the application name so we can track it in the profile logs
-    * on the server. This can also be done from the URI (see other examples).
-    */
-    mongoc_client_set_appname(client, "mongocat");
-
-    /*
-    * Get a handle on the database "db_name" and collection "coll_name"
-    */
-    database = mongoc_client_get_database(client, "db_name");
-    collection = mongoc_client_get_collection(client, "db_name", "coll_name");
-
-    /*
-    * Do work. This example pings the database, prints the result as JSON and
-    * performs an insert
-    */
-    command = BCON_NEW("ping", BCON_INT32(1));
-
-    retval = mongoc_client_command_simple(
-        client, "admin", command, NULL, &reply, &error);
-
-    if (!retval)
-    {
-        fprintf(stderr, "%s\n", error.message);
-        return EXIT_FAILURE;
-    }
-
-    str = bson_as_json(&reply, NULL);
-    printf("Connected to %s\n", uri_string);
+    pool = mongoc_client_pool_new(uri);
+    mongoc_client_pool_set_error_api(pool, 2);
 
     filename = *input->filename;
 
@@ -203,9 +178,6 @@ int main(int argc, char *argv[])
             printf("Opened %s\n", filename);
         }
     }
-
-    begin_time = clock();
-    count = 0;
     /*
        * Convert each incoming document to BSON and print to stdout.
        */
@@ -242,24 +214,24 @@ int main(int argc, char *argv[])
 
     for (i = 0; i < *numThreads->ival; i++)
     {
-        pthread_create(&tid, NULL, bulk1, (void *)collection);
+        printf("Starting thread %d\n", i);
+        pthread_create(&threads[i], NULL, bulk1, pool);
+    }
+
+    for (i = 0; i < *numThreads->ival; i++)
+    {
+        pthread_join(threads[i], &ret);
     }
     pthread_exit(NULL);
 
     bson_json_reader_destroy(reader);
     bson_destroy(&doc);
 
-    bson_destroy(&reply);
-    bson_destroy(command);
-    bson_free(str);
-
     /*
     * Release our handles and clean up libmongoc
     */
-    mongoc_collection_destroy(collection);
-    mongoc_database_destroy(database);
+    mongoc_client_pool_destroy(pool);
     mongoc_uri_destroy(uri);
-    mongoc_client_destroy(client);
     mongoc_cleanup();
 
     // printf("Hello, world! %d\n", getNumCores());
